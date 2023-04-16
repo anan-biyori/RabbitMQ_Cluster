@@ -1,0 +1,265 @@
+
+
+https://www.rabbitmq.com/which-erlang.html
+https://github.com/rabbitmq/rabbitmq-server/releases/tag/v3.9.16
+https://github.com/rabbitmq/erlang-rpm/releases/tag/v23.3.4.11
+socat rhel7 : 
+https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi/server/7/7Server/x86_64/os/Packages/s/
+rhel 7.6 : 
+https://archive.org/download/rhel-server-7.6-x86_64-dvd
+
+
+瀏覽後台管理介面
+http://192.168.0.25:15672
+http://192.168.0.26:15672
+http://192.168.0.27:15672
+
+
+
+sudo yum install socat -y
+sudo rpm -ivh socat-1.7.3.2-2.el7.x86_64.rpm
+
+sudo rpm -ivh erlang-23.3.4.11-1.el7.x86_64.rpm
+
+sudo rpm -ivh rabbitmq-server-3.9.16-1.el7.noarch.rpm
+
+安裝完成後驗證：
+erl
+
+啟動RabbitMQ服務
+sudo systemctl start rabbitmq-server
+
+使用 --now 指令讓 RabbitMQ 服務會自動啟動
+sudo systemctl enable --now rabbitmq-server.service
+
+驗證 RabbitMQ 服務
+sudo systemctl status rabbitmq-server
+
+sudo rabbitmqctl status
+
+sudo rabbitmq-diagnostics server_version
+
+啟用管理介面功能
+sudo rabbitmq-plugins enable rabbitmq_management
+
+新增admin帳號
+sudo rabbitmqctl add_user admin
+sudo rabbitmqctl set_user_tags admin administrator
+
+賦予admin帳號權限
+sudo rabbitmqctl set_permissions -p '/' admin '.' '.' '.'
+
+刪除預設的guest帳戶
+sudo rabbitmqctl delete_user guest
+
+確認RabbitMQ帳號清單
+sudo rabbitmqctl list_users
+
+瀏覽後台管理介面
+http://192.168.0.25:15672
+http://192.168.0.26:15672
+http://192.168.0.27:15672
+
+
+RabbitMQ Cluster建置
+
+1. 新增rabbitmq.conf設定檔並設定啟用 proxy_protocol = true (每一台都要)
+先停止服務
+sudo rabbitmqctl stop_app
+sudo systemctl stop rabbitmq-server
+
+搜尋default設定檔位置
+find / -name rabbitmq-defaults
+
+調整default設定檔內容(調整 /rabbitmq/bin/ 下面的即可)
+vi /usr/lib/rabbitmq/bin/rabbitmq-defaults
+
+新增如下設定
+CONFIG_FILE=${SYS_PREFIX}/etc/rabbitmq/rabbitmq
+CONF_ENV_FILE=${SYS_PREFIX}/etc/rabbitmq/rabbitmq-env.conf
+
+cat確認看看default設定檔是否有同步更新
+cat /usr/lib/rabbitmq/bin/rabbitmq-defaults
+cat /usr/lib/rabbitmq/lib/rabbitmq_server-3.9.16/sbin/rabbitmq-defaults
+
+新增.conf設定檔
+設定檔範本：https://github.com/rabbitmq/rabbitmq-server/blob/main/deps/rabbit/docs/rabbitmq.conf.example
+
+cd /etc/rabbitmq/
+vi rabbitmq.conf
+
+搜尋關鍵字
+:/proxy_protocol
+## Whether or not to enable proxy protocol support.
+## Once enabled, clients cannot directly connect to the broker
+## anymore. They must connect through a load balancer that sends the
+## proxy protocol header to the broker at connection time.
+## This setting applies only to AMQP clients, other protocols
+## like MQTT or STOMP have their own setting to enable proxy protocol.
+## See the plugins documentation for more information.
+##
+proxy_protocol = true
+
+
+
+*** 以下建議於 Production 環境使用 ***
+搜尋關鍵字
+:/vm_memory_high_watermark.relative
+## Memory-based Flow Control threshold.
+##
+vm_memory_high_watermark.relative = 0.7
+
+
+
+搜尋關鍵字
+:/disk_free_limit.relative
+## Alternatively, we can set a limit relative to total available RAM.
+##
+## Values lower than 1.0 can be dangerous and should be used carefully.
+disk_free_limit.relative = 1.5
+*****************************************
+
+
+vi rabbitmq-env.conf
+新增如下設定
+CONFIG_FILE=/etc/rabbitmq/rabbitmq
+CONF_ENV_FILE=/etc/rabbitmq/rabbitmq-env.conf
+
+
+
+啟動RabbitMQ服務
+sudo systemctl start rabbitmq-server
+sudo rabbitmqctl start_app
+
+檢視Log資訊確認是否有順利載入rabbitmq.conf設定檔
+cat /var/log/rabbitmq/rabbit@{YOUR_SERVER_NAME}.log
+cat /var/log/rabbitmq/rabbit@mq-master.log
+cat /var/log/rabbitmq/rabbit@mq-node01.log
+cat /var/log/rabbitmq/rabbit@mq-node02.log
+
+
+確認proxy_protocol是否順利啟用
+sudo rabbitmqctl environment
+
+*PS. 啟用proxy_protocol = true之後，MQ Client端程式將無法以IP直連Cluster Node，必須改透過Proxy IP(eg. F5 VIP)進行連線，且須於header帶入 proxy protocol header 資訊。
+
+
+2. 調整Hosts / resolv.conf (每一台都要)
+Hosts : vi /etc/hosts
+192.168.0.25   mq-master
+192.168.0.26   mq-node01
+192.168.0.27   mq-node02
+
+
+resolv.conf：vi /etc/resolv.conf
+domain mq-master
+nameserver 192.168.0.25
+
+domain mq-node01
+nameserver 192.168.0.26
+
+domain mq-node02
+nameserver 192.168.0.27
+
+
+完成後可以透過以下指令確認
+ping -c 3 mq-master
+ping -c 3 mq-node01
+ping -c 3 mq-node02
+rabbitmq-diagnostics resolve_hostname mq-master
+rabbitmq-diagnostics resolve_hostname mq-node01
+rabbitmq-diagnostics resolve_hostname mq-node02
+rabbitmq-diagnostics resolver_info
+
+
+3. 調整limits.conf擴大系統最大打開文件限制(每一台都要)
+vi /etc/security/limits.conf
+
+rabbitmq        -       nofile       65535
+
+
+4. reboot 重啟系統
+完成 reboot 重啟系統後，再使用以下指令確認
+sudo -u rabbitmq bash -c 'ulimit -Sn'
+rabbitmq-diagnostics resolve_hostname mq-master
+rabbitmq-diagnostics resolve_hostname mq-node01
+rabbitmq-diagnostics resolve_hostname mq-node02
+rabbitmq-diagnostics resolver_info
+
+
+5. 將必要Port加入firewalld允許規則(每一台都要)
+*** 若 firewalld 服務是關閉的話，此步驟可省略 ***
+https://www.rabbitmq.com/networking.html#ports
+
+firewall-cmd --zone=public --add-port=4369/tcp --permanent
+firewall-cmd --zone=public --add-port=25672/tcp --permanent
+firewall-cmd --zone=public --add-port=15672/tcp --permanent
+firewall-cmd --zone=public --add-port=15671/tcp --permanent
+firewall-cmd --zone=public --add-port=5672/tcp --permanent
+firewall-cmd --zone=public --add-port=5671/tcp --permanent
+firewall-cmd --zone=public --add-port=5552/tcp --permanent
+firewall-cmd --zone=public --add-port=5551/tcp --permanent
+firewall-cmd --zone=public --add-port=80/tcp --permanent
+firewall-cmd --zone=public --add-port=443/tcp --permanent
+
+firewall-cmd --permanent --add-rich-rule="rule family="ipv4" source address="YOUR_VIP_ADDRESS" accept"
+
+
+6. 確認firewalld設定
+sudo systemctl status firewalld
+
+使用以下指令重新載入firewalld設定
+sudo firewall-cmd --reload
+
+使用以下指令查看firewall清單
+sudo firewall-cmd --list-all
+
+
+7. 同步Erlang Cookie(所有加入的Cluster Node皆必須使用相同的Erlang Cookie)
+*** 假設以 MQ-Master 這台為主，則MQ-Node01、MQ-Node02這兩台需加入至MQ-Master ***
+*** 那麼就會將 MQ-Master 這台的Erlang Cookie同步至MQ-Node01、MQ-Node02這兩台 ***
+*** 注意，MQ-Node01、MQ-Node02這兩台需先將RabbitMQ服務停止後再進行Erlang Cookie同步 ***
+
+先停止MQ-Node01、MQ-Node02服務
+sudo rabbitmqctl stop_app
+sudo systemctl stop rabbitmq-server
+
+在MQ-Master執行以下指令同步Erlang Cookie
+scp /var/lib/rabbitmq/.erlang.cookie root@mq-node01:/var/lib/rabbitmq
+scp /var/lib/rabbitmq/.erlang.cookie root@mq-node02:/var/lib/rabbitmq
+
+PS. 如果RabbitMQ服務未曾啟動過的話，是不會有erlang.cookie檔案的。
+
+
+可用以下指令來確認erlang.cookie檔案
+ls -lah /var/lib/rabbitmq
+cat /var/lib/rabbitmq/.erlang.cookie
+
+確認完成同步後，再次啟動RabbitMQ服務
+sudo systemctl start rabbitmq-server
+sudo rabbitmqctl start_app
+
+
+8. 將RabbitMQ Node加入叢集(Cluster)
+*** 假設以 MQ-Master 這台為主，則MQ-Node01、MQ-Node02這兩台需加入至MQ-Master ***
+
+*MQ-Node01：加入到叢集MQ-Master
+sudo rabbitmqctl stop_app
+sudo rabbitmqctl join_cluster rabbit@mq-master
+sudo rabbitmqctl start_app
+
+*MQ-Node02：加入到叢集MQ-Master
+sudo rabbitmqctl stop_app
+sudo rabbitmqctl join_cluster rabbit@mq-master
+sudo rabbitmqctl start_app
+
+
+9. 查看Cluster叢集狀態
+sudo rabbitmqctl cluster_status
+
+
+10. F5 WAF 新增 proxy protocol header iRule
+https://community.f5.com/t5/technical-forum/proxy-protocol-how-to-implement-via-irule/m-p/112015/highlight/true#M95709
+
+
+END.
