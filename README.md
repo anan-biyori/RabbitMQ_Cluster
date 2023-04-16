@@ -1,5 +1,5 @@
 # RabbitMQ_Cluster
-YouTube Channel : https://www.youtube.com/channel/UCFd2pd4hZUxmnFZg_tNlvNg  
+YouTube Channel : https://youtube.com/@anan.biyori  
 
 ==============================================  
 RabbitMQ Cluster手把手建置教學 : https://youtu.be/gtkFJe0UHxo  
